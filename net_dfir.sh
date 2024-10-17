@@ -1,3 +1,5 @@
+#!/bin/bash
+
 clear
 export GREP_COLORS="01;35"
 

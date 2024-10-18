@@ -12,8 +12,6 @@ BOLD='\033[1m'
 BOLD_PINK='\033[1;35m'
 DIV="=============================="
 
-PCAP_FILE="$1"
-LOG_DIR="case001"
 
 BANNER="
 
@@ -26,6 +24,38 @@ BANNER="
 
 Perform basic network analysis on network captures.
 "
+
+OPTIONS=("PCAP")
+SWITCHES=("-r")
+OPTION_IDX=0
+REMOVAL_REQUIRED=0
+
+for arg in "$@"; do
+	if [ ! -z "$NEXT_ARG_VARIABLE" ]; then
+		eval "${NEXT_ARG_VARIABLE}=\"$arg\""
+		continue
+	fi
+
+	if [[ ${SWITCHES[@]} =~ $arg ]]; then
+		case $arg in
+		"-r")
+			REMOVAL_REQUIRED=1
+			;;
+		esac
+		continue
+	else
+
+		case $OPTION_IDX in
+			0)
+				PCAP_FILE="$arg"
+				LOG_DIR="$arg.zeeklogs"
+				;;
+		esac
+	
+		((OPTION_IDX++))
+	fi
+
+done
 
 log_header() {
 	local heading=$1
@@ -47,6 +77,13 @@ log_value() {
 
 log_banner() {
 	echo "$BANNER"
+}
+
+zeek_create() {
+	mkdir $LOG_DIR
+	cd $LOG_DIR
+	zeek -r ../$PCAP_FILE
+	cd ..
 }
 
 find_pe_files() {
@@ -79,10 +116,20 @@ map_active_directory() {
 	echo
 }
 
+zeek_remove() {
+	rm -rf $LOG_DIR
+}
+
 execute_all() {
 	log_banner
+	zeek_create
     find_pe_files
 	map_active_directory
+
+	# if REMOVAL_REQUIRED is set, mount the image
+	if [ $REMOVAL_REQUIRED -eq 1 ]; then
+		zeek_remove
+	fi
 }
 
 execute_all

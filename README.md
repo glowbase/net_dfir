@@ -3,5 +3,5 @@ Perform artifact driven analysis on network captures.
 
 ## Use
 ```bash
-sudo ./net_dfir.sh
+sudo ./net_dfir.sh <pcap_file>
 ```

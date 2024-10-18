@@ -47,8 +47,9 @@ for arg in "$@"; do
 
 		case $OPTION_IDX in
 			0)
-				PCAP_FILE="$arg"
-				LOG_DIR="$arg.zeeklogs"
+				PCAP_FILE="$(realpath $arg)"
+				TIMESTAMP="$(date +%y%m%d%H%M%S)"
+				LOG_DIR="$PCAP_FILE-$TIMESTAMP"
 				;;
 		esac
 	
@@ -80,10 +81,11 @@ log_banner() {
 }
 
 zeek_create() {
+	ORIGINAL="$(pwd)"
 	mkdir $LOG_DIR
 	cd $LOG_DIR
-	zeek -r ../$PCAP_FILE
-	cd ..
+	zeek -r $PCAP_FILE
+	cd $ORIGINAL
 }
 
 find_pe_files() {

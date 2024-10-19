@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#set -x
 clear
 
 RED='\033[31m'
@@ -32,6 +33,12 @@ while getopts "r:e" opt; do
         "e")
             EXPORT=true
             ;;
+		"i")
+			NETFLOW_FILE="$OPTARG"
+			;;
+		"c")
+			CIDR="$OPTARG"
+			;;
     esac
 done
 
@@ -66,6 +73,13 @@ if [[ $PCAP == *.pcap || $PCAP == *.cap ]]; then
 else
     help
 fi
+
+if [ -z "$NETFLOW_FILE" ]; then
+	NETFLOW_FILE="$DIR/netflow.silk"
+fi
+
+echo $NETFLOW_FILE
+echo $DIR
 
 log_header() {
 	local heading=$1
@@ -102,6 +116,55 @@ mmdb_check() {
         echo "Installing mmdblookup..."
         sudo apt install libmaxminddb0 libmaxminddb-dev mmdb-bin geoipupdate -y &>/dev/null
     fi
+}
+
+netflow_create() {
+	echo $(log_header "NETFLOW")
+	echo
+
+	rwp2yaf2silk --in $PCAP_FILE --out $NETFLOW_FILE
+}
+
+netflow_all_tcp_ports(){
+	echo $(log_header "NETFLOW ALL DESTINATION PORTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	rwfilter --type=all --proto=0-255 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+}
+
+netflow_excessive_unique_requests(){
+	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	# Shows all source IPs that have made more than 10 unique requests to the same destination IP and port in less than 0.5 seconds
+	rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwfilter --duration=0.0-0.5 - --pass=stdout | rwsort --field=stime | rwuniq --fields=sip,dip,dport --values=distinct:sport --threshold=distinct:sport=10
+
+}
+
+netflow_all_ip_addresses(){
+	echo $(log_header "NETFLOW ALL IP ADDRESSES")
+	echo
+
+	# Shows the count of all the packets to each IP address
+	(rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=sip &&
+        rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=dip ) | sort | uniq -c | egrep -v "1\s+[sd]IP" | sort -nr
+}
+
+find_pe_files() {
+	echo $(log_header "EXECUTABLES")
+	echo
 
     if [ ! -f "/tmp/geo-city.mmdb" ]; then
         echo "Installing mmdb database..."
@@ -462,6 +525,10 @@ execute_all() {
 	banner
     mmdb_check
     download_threat_intel
+	netflow_create
+	netflow_all_tcp_ports
+	netflow_all_ip_addresses
+	netflow_excessive_unique_requests
     zeek_create
     get_environment
     get_active_directory

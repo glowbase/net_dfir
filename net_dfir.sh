@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#set -x
 clear
 export GREP_COLORS="01;35"
 
@@ -26,7 +27,7 @@ Perform basic network analysis on network captures.
 "
 
 OPTIONS=("PCAP")
-SWITCHES=("-r")
+SWITCHES=("-r", "--ipfix", "--cidr")
 OPTION_IDX=0
 REMOVAL_REQUIRED=0
 
@@ -41,15 +42,26 @@ for arg in "$@"; do
 		"-r")
 			REMOVAL_REQUIRED=1
 			;;
+		"--ipfix")
+			NETFLOW_FILE=$arg
+			;;
+		"--cidr")
+			CIDR=$arg
+			;;
 		esac
 		continue
 	else
 
 		case $OPTION_IDX in
 			0)
+				LOG_DIR="$arg"
+				;;
+			1)
 				PCAP_FILE="$(realpath $arg)"
 				TIMESTAMP="$(date +%y%m%d%H%M%S)"
-				LOG_DIR="$PCAP_FILE-$TIMESTAMP"
+				if [ -z "$LOG_DIR" ]; then
+					LOG_DIR="$PCAP_FILE-$TIMESTAMP"
+				fi
 				;;
 		esac
 	
@@ -57,6 +69,13 @@ for arg in "$@"; do
 	fi
 
 done
+
+if [ -z "$NETFLOW_FILE" ]; then
+	NETFLOW_FILE="$LOG_DIR/netflow.silk"
+fi
+
+echo $NETFLOW_FILE
+echo $LOG_DIR
 
 log_header() {
 	local heading=$1
@@ -86,6 +105,50 @@ zeek_create() {
 	cd $LOG_DIR
 	zeek -r $PCAP_FILE
 	cd $ORIGINAL
+}
+
+netflow_create() {
+	echo $(log_header "NETFLOW")
+	echo
+
+	rwp2yaf2silk --in $PCAP_FILE --out $NETFLOW_FILE
+}
+
+netflow_all_tcp_ports(){
+	echo $(log_header "NETFLOW ALL DESTINATION PORTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	rwfilter --type=all --proto=0-255 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+}
+
+netflow_excessive_unique_requests(){
+	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	# Shows all source IPs that have made more than 10 unique requests to the same destination IP and port in less than 0.5 seconds
+	rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwfilter --duration=0.0-0.5 - --pass=stdout | rwsort --field=stime | rwuniq --fields=sip,dip,dport --values=distinct:sport --threshold=distinct:sport=10
+
+}
+
+netflow_all_ip_addresses(){
+	echo $(log_header "NETFLOW ALL IP ADDRESSES")
+	echo
+
+	# Shows the count of all the packets to each IP address
+	(rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=sip &&
+        rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=dip ) | sort | uniq -c | egrep -v "1\s+[sd]IP" | sort -nr
 }
 
 find_pe_files() {
@@ -124,8 +187,13 @@ zeek_remove() {
 
 execute_all() {
 	log_banner
+	netflow_create
+	netflow_all_tcp_ports
+	netflow_all_ip_addresses
+	netflow_excessive_unique_requests
+	#netflow_all_udp_ports
 	zeek_create
-    find_pe_files
+	find_pe_files
 	map_active_directory
 
 	# if REMOVAL_REQUIRED is set, mount the image

@@ -43,10 +43,10 @@ for arg in "$@"; do
 			REMOVAL_REQUIRED=1
 			;;
 		"--ipfix")
-			NETFLOW_FILE=$arg
+			NEXT_ARG_VARIABLE="NETFLOW_FILE"
 			;;
 		"--cidr")
-			CIDR=$arg
+			NEXT_ARG_VARIABLE="CIDR"
 			;;
 		esac
 		continue
@@ -76,6 +76,7 @@ fi
 
 echo $NETFLOW_FILE
 echo $LOG_DIR
+echo $CIDR
 
 log_header() {
 	local heading=$1
@@ -115,7 +116,7 @@ netflow_create() {
 }
 
 netflow_all_tcp_ports(){
-	echo $(log_header "NETFLOW ALL DESTINATION PORTS")
+	echo $(log_header "NETFLOW ALL TCP DESTINATION PORTS")
 	echo
 
 	# if the cidr is set, use it
@@ -124,11 +125,27 @@ netflow_all_tcp_ports(){
 		CIDR_FILTER="--dcidr=$CIDR"
 	fi
 
-	rwfilter --type=all --proto=0-255 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+	rwfilter --type=all --proto=6 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+}
+
+netflow_all_udp_ports(){
+	echo $(log_header "NETFLOW ALL UDP DESTINATION PORTS")
+	echo
+
+	# if the cidr is not set exit with an error
+	CIDR_FILTER=""
+	if [ -z "$CIDR" ]; then
+		echo $(log_value "CIDR" "CIDR is required for this analysis")
+		return
+	fi
+
+	CIDR_FILTER="--dcidr=$CIDR"
+
+	rwfilter --type=all --proto=17 $CIDR_FILTER --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --values=records --threshold=3
 }
 
 netflow_excessive_unique_requests(){
-	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS")
+	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS (<0.5s)")
 	echo
 
 	# if the cidr is set, use it
@@ -139,14 +156,13 @@ netflow_excessive_unique_requests(){
 
 	# Shows all source IPs that have made more than 10 unique requests to the same destination IP and port in less than 0.5 seconds
 	rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwfilter --duration=0.0-0.5 - --pass=stdout | rwsort --field=stime | rwuniq --fields=sip,dip,dport --values=distinct:sport --threshold=distinct:sport=10
-
 }
 
 netflow_all_ip_addresses(){
 	echo $(log_header "NETFLOW ALL IP ADDRESSES")
 	echo
 
-	# Shows the count of all the packets to each IP address
+	# Shows the count of all the records to each IP address
 	(rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=sip &&
         rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=dip ) | sort | uniq -c | egrep -v "1\s+[sd]IP" | sort -nr
 }
@@ -189,9 +205,9 @@ execute_all() {
 	log_banner
 	netflow_create
 	netflow_all_tcp_ports
+	netflow_all_udp_ports
 	netflow_all_ip_addresses
 	netflow_excessive_unique_requests
-	#netflow_all_udp_ports
 	zeek_create
 	find_pe_files
 	map_active_directory

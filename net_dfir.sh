@@ -82,6 +82,11 @@ echo $NETFLOW_FILE
 echo $DIR
 echo $CIDR
 
+# create the log dir if it doesn't exist
+if [ ! -d "$LOG_DIR" ]; then
+	mkdir $LOG_DIR
+fi
+
 log_header() {
 	local heading=$1
 	local sub_heading=$2

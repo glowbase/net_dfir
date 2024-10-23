@@ -4,3 +4,5 @@
 *.pcapng
 *.cap
 *.json
+/*.zeek
+/*.files

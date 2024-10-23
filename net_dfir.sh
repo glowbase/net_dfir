@@ -7,9 +7,11 @@ RED='\033[31m'
 GREEN='\033[32m'
 BLUE='\033[34m'
 CYAN='\033[35m'
+WHITE='\033[1;37m'
 RESET='\033[0m'
 BOLD='\033[1m'
 BOLD_PINK='\033[1;35m'
+YELLOW_BG="\e[1;43m"
 DIV="=============================="
 
 
@@ -26,7 +28,7 @@ BANNER="
 PCAP=$1
 DIR=$PCAP.zeek
 
-GEO_HIGHLIGHT="russia|iran|lithuania|china|cyprus|hong|kong|$"
+GEO_HIGHLIGHT="russia|iran|lithuania|china|cyprus|hong\skong|united\sarab\semirates|$"
 AGENT_HIGHLIGHT="python|curl|wget|$"
 HOST_HIGHLIGHT="python|simplehttp|$"
 FILE_HIGHLIGHT="\.[a-zA-Z]+|$"
@@ -148,7 +150,7 @@ get_win_computers() {
     echo
 
     local win_hosts=$(
-        tshark -r $PCAP -Y "ip.dst!=$dc_ip&&kerberos.CNameString contains '$'" -T fields -e eth.src -e ip.src -e kerberos.CNameString | \
+        tshark -r $PCAP -Y "ip.dst!=$dc_ip&&kerberos.CNameString contains '$'" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
         awk '{print toupper($0)}' | \
         sed 's/\$//g' | \
         column -t | \
@@ -166,7 +168,7 @@ get_win_users() {
     echo
 
     local win_users=$(
-        tshark -r $PCAP -Y "kerberos.CNameString&&ip.dst!=$dc_ip&& not (kerberos.CNameString contains '$')" -T fields -e eth.src -e ip.dst -e kerberos.CNameString | \
+        tshark -r $PCAP -Y "kerberos.CNameString&&ip.dst!=$dc_ip&& not (kerberos.CNameString contains '$')" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
         column -t | \
         sort | \
         uniq
@@ -196,6 +198,8 @@ get_dhcp_information() {
             uniq
         )
 
+        echo $dhcp
+
         local dhcp_domain=$(echo $dhcp | cut -d " " -f 1)
         local dhcp_dns=$(echo $dhcp | cut -d " " -f 2)
         local dhcp_server=$(echo $dhcp | cut -d " " -f 3)
@@ -207,9 +211,59 @@ get_dhcp_information() {
         echo $(log_value "Server" $dhcp_server)
         echo $(log_value "Subnet" $dhcp_subnet)
         echo $(log_value "Router" $dhcp_router)
+
+        echo
+
+        echo $(log_value "DHCP Devices")
+        
+        tshark -r $PCAP -Y "dhcp.option.dhcp==5&&ip.src!=0.0.0.0" -T fields -e dhcp.ip.your | \
+        sort | \
+        uniq
     else
         echo "No DHCP Traffic..."
     fi
+
+    echo
+}
+
+check_ip() {
+    ip=$1
+
+    if cat /tmp/ipsum.txt | grep -q "$ip"; then
+        echo true
+    else
+        echo false
+    fi
+}
+
+get_anomolous_dc_activity() {
+    echo $(log_header "DC ACTIVITY")
+    echo
+
+    local list=""
+    local traffic=$(
+        tshark -r $PCAP -Y "tcp.srcport<10000&&ip.src==$dc_ip" -T fields -e ip.src -e ip.dst -e tcp.srcport | \
+        sort | \
+        uniq -c | \
+        column -t
+    )
+
+    while IFS= read -r line; do
+        local occurences=$(echo $line | cut -d " " -f 1)
+        local src_ip=$(echo $line | cut -d " " -f 2)
+        local dst_ip=$(echo $line | cut -d " " -f 3)
+        local port=$(echo $line | cut -d " " -f 4)
+        local country=$(
+            mmdblookup -f /tmp/geo-city.mmdb -i $dst_ip country names en 2>/dev/null | \
+            cut -d '"' -f 2 | \
+            egrep -v '^$' | \
+            egrep -i --color=always $GEO_HIGHLIGHT
+        )
+
+        list+="$occurences,$src_ip -> $dst_ip,:$port,$country\n"
+    done <<< "$traffic"
+
+    echo -e "$list" | column -t -s "," | sort -k 1 -n -r
 
     echo
 }
@@ -219,9 +273,8 @@ get_malicious_ips() {
     echo
 
     list=""
-    ports=$(
-        tshark -r $PCAP -T fields -e ip.src -e tcp.srcport | \
-        awk '$2 <= 10000' | \
+    traffic=$(
+        tshark -r $PCAP -T fields -e ip.src | \
         sort | \
         uniq -c | \
         column -t
@@ -230,7 +283,7 @@ get_malicious_ips() {
     while IFS= read -r line; do
         local occurences=$(echo $line | cut -d " " -f 1)
         local ip=$(echo $line | cut -d " " -f 2)
-        local port=$(echo $line | cut -d " " -f 3 | egrep --color=always $PORT_HIGHLIGHT)
+        local ip_check=$(check_ip $ip)
         local country=$(
             mmdblookup -f /tmp/geo-city.mmdb -i $ip country names en 2>/dev/null | \
             cut -d '"' -f 2 | \
@@ -238,10 +291,14 @@ get_malicious_ips() {
             egrep -i --color=always $GEO_HIGHLIGHT
         )
 
-        list+="$occurences,$ip,$port,$country\n"
-    done <<< $ports
+        if [ $ip_check = true ]; then
+            list+="$occurences,${YELLOW_BG}${WHITE}$ip${RESET},$country\n"
+        else
+            list+="$occurences,$ip,$country\n"
+        fi
+    done <<< $traffic
 
-    echo -e "$list" | column -t -s "," | sort -k 1 -n -r | awk '$4 !=""'
+    echo -e "$list" | column -t -s "," | sort -k 1 -n -r | awk '$3 !=""'
 
     echo
 }
@@ -339,9 +396,27 @@ get_http_objects() {
     mkdir http.files
 
     tshark -r $PCAP --export-objects http,http.files &>/dev/null
-    
+
     md5sum http.files/*.* | \
     sed 's/http\.files/ /g' | \
+    tr '/' ' ' | \
+    column -t | \
+    egrep -i --color=always $OBJECT_HIGHLIGHT
+
+    echo
+}
+
+get_smb_objects() {
+        echo $(log_header "SMB OBJECTS")
+    echo
+
+    rm -rf smb.files
+    mkdir smb.files
+
+    tshark -r $PCAP --export-objects smb,smb.files &>/dev/null
+
+    md5sum smb.files/*.* | \
+    sed 's/smb\.files/ /g' | \
     tr '/' ' ' | \
     column -t | \
     egrep -i --color=always $OBJECT_HIGHLIGHT
@@ -359,14 +434,14 @@ execute_all() {
     get_win_computers
     get_win_users
     get_dhcp_information
+    get_anomolous_dc_activity
     get_malicious_ips
     get_user_agents
     get_server_hosts
     get_uris
     get_http_objects
-    # get_external_connections
+    get_smb_objects
+    get_external_connections
 }
 
-# execute_all
-
-get_http_objects
+execute_all

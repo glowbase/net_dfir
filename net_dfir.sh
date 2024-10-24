@@ -12,6 +12,7 @@ RESET='\033[0m'
 BOLD='\033[1m'
 BOLD_PINK='\033[1;35m'
 YELLOW_BG="\e[1;43m"
+RED_BG='\e[1;41m'
 DIV="=============================="
 
 
@@ -198,8 +199,6 @@ get_dhcp_information() {
             uniq
         )
 
-        echo $dhcp
-
         local dhcp_domain=$(echo $dhcp | cut -d " " -f 1)
         local dhcp_dns=$(echo $dhcp | cut -d " " -f 2)
         local dhcp_server=$(echo $dhcp | cut -d " " -f 3)
@@ -230,9 +229,9 @@ check_ip() {
     ip=$1
 
     if cat /tmp/ipsum.txt | grep -q "$ip"; then
-        echo true
+        echo -e "${RED_BG}${WHITE}$ip${RESET}"
     else
-        echo false
+        echo -e "$ip"
     fi
 }
 
@@ -260,7 +259,10 @@ get_anomolous_dc_activity() {
             egrep -i --color=always $GEO_HIGHLIGHT
         )
 
-        list+="$occurences,$src_ip -> $dst_ip,:$port,$country\n"
+        local src_ip_stat=$(check_ip $src_ip)
+        local dst_ip_stat=$(check_ip $dst_ip)
+
+        list+="$occurences,$src_ip_stat -> $dst_ip_stat,:$port,$country\n"
     done <<< "$traffic"
 
     echo -e "$list" | column -t -s "," | sort -k 1 -n -r
@@ -283,7 +285,7 @@ get_malicious_ips() {
     while IFS= read -r line; do
         local occurences=$(echo $line | cut -d " " -f 1)
         local ip=$(echo $line | cut -d " " -f 2)
-        local ip_check=$(check_ip $ip)
+        local ip_stat=$(check_ip $ip)
         local country=$(
             mmdblookup -f /tmp/geo-city.mmdb -i $ip country names en 2>/dev/null | \
             cut -d '"' -f 2 | \
@@ -291,11 +293,7 @@ get_malicious_ips() {
             egrep -i --color=always $GEO_HIGHLIGHT
         )
 
-        if [ $ip_check = true ]; then
-            list+="$occurences,${YELLOW_BG}${WHITE}$ip${RESET},$country\n"
-        else
-            list+="$occurences,$ip,$country\n"
-        fi
+        list+="$occurences,$ip_stat,$country\n"
     done <<< $traffic
 
     echo -e "$list" | column -t -s "," | sort -k 1 -n -r | awk '$3 !=""'
@@ -347,8 +345,9 @@ get_uris() {
         local ip=$(echo $line | cut -d " " -f 2)
         local port=$(echo $line | cut -d " " -f 3)
         local path=$(echo $line | cut -d " " -f 4 | awk 'length > 130{$0=substr($0,0,131)"..."}1')
+        local ip_stat=$(check_ip $ip)
 
-        list+="$occurences,$ip:$port,$path\n"
+        list+="$occurences,$ip_stat:$port,$path\n"
     done <<< $uris
 
     echo -e "$list" | column -t -s "," | sort -k 1 -n -r
@@ -379,8 +378,9 @@ get_external_connections() {
             egrep -v '^$' | \
             egrep -i --color=always $GEO_HIGHLIGHT
         )
+        local ip_stat=$(check_ip $ip)
 
-        list+="$occurences,$ip,$port,$country\n"
+        list+="$occurences,$ip_stat,$port,$country\n"
     done <<< $ports
 
     echo -e "$list" | column -t -s "," | sort -k 1 -n -r | awk '$4 !=""'
@@ -441,7 +441,6 @@ execute_all() {
     get_uris
     get_http_objects
     get_smb_objects
-    get_external_connections
 }
 
 execute_all

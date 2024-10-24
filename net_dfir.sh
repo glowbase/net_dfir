@@ -26,15 +26,70 @@ BANNER="
 ╚═╝  ╚═══╝╚══════╝   ╚═╝       ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝
 "
 
-PCAP=$1
-DIR=$PCAP.zeek
-
 GEO_HIGHLIGHT="russia|iran|lithuania|china|cyprus|hong\skong|united\sarab\semirates|$"
 AGENT_HIGHLIGHT="python|curl|wget|$"
 HOST_HIGHLIGHT="python|simplehttp|$"
 FILE_HIGHLIGHT="\.[a-zA-Z]+|$"
 PORT_HIGHLIGHT="139|445|135|4444|9001|8080|8001|8000|3389$"
 OBJECT_HIGHLIGHT="\.zip|\.rar|\.exe|$"
+
+OPTIONS=("PCAP")
+SWITCHES=("-r", "--ipfix", "--cidr", "-d")
+OPTION_IDX=0
+NEXT_ARG_VARIABLE=""
+REMOVAL_REQUIRED=0
+
+for arg in "$@"; do
+	if [ ! -z "$NEXT_ARG_VARIABLE" ]; then
+		eval "${NEXT_ARG_VARIABLE}=\"$arg\""
+		NEXT_ARG_VARIABLE=""
+		continue
+	fi
+
+	if [[ ${SWITCHES[@]} =~ $arg ]]; then
+		case $arg in
+		"-r")
+			REMOVAL_REQUIRED=1
+			;;
+		"--ipfix")
+			NEXT_ARG_VARIABLE="NETFLOW_FILE"
+			;;
+		"--cidr")
+			NEXT_ARG_VARIABLE="CIDR"
+			;;
+		"-d")
+			NEXT_ARG_VARIABLE="DIR"
+			;;
+				
+		esac
+		continue
+	else
+
+		case $OPTION_IDX in
+			0)
+				PCAP="$(realpath $arg)"
+				TIMESTAMP="$(date +%y%m%d%H%M%S)"
+				if [ -z "$DIR" ]; then
+					DIR="$PCAP-$TIMESTAMP"
+				fi
+				;;
+		esac
+	
+		((OPTION_IDX++))
+	fi
+
+DIR="$(realpath $DIR)"
+
+done
+
+if [ -z "$NETFLOW_FILE" ]; then
+	NETFLOW_FILE="$DIR/netflow.silk"
+fi
+
+# create the log dir if it doesn't exist
+if [ ! -d "$DIR" ]; then
+	mkdir $DIR
+fi
 
 log_header() {
 	local heading=$1
@@ -58,15 +113,77 @@ log_banner() {
 	echo "$BANNER"
 }
 
-generate_zeek_output() {
-    if [ ! -d "$DIR" ]; then
-        echo "Generating Zeek Output..."
-        echo
+zeek_create() {
+    echo $(log_header "Zeek")
+	echo
+    echo "Generating Zeek Output..."
+    echo
 
-        zeek -r $PCAP
+    if [ ! -d "$DIR" ]; then
         mkdir $DIR
-        mv *.log $DIR
     fi
+
+	zeek -r $PCAP
+    mv *.log $DIR
+}
+
+netflow_create() {
+	echo $(log_header "NETFLOW")
+	echo
+
+	rwp2yaf2silk --in $PCAP --out $NETFLOW_FILE
+}
+
+netflow_all_tcp_ports(){
+	echo $(log_header "NETFLOW ALL TCP DESTINATION PORTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	rwfilter --type=all --proto=6 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+}
+
+netflow_all_udp_ports(){
+	echo $(log_header "NETFLOW ALL UDP DESTINATION PORTS")
+	echo
+
+	# if the cidr is not set exit with an error
+	CIDR_FILTER=""
+	if [ -z "$CIDR" ]; then
+		echo $(log_value "CIDR" "CIDR is required for this analysis")
+		return
+	fi
+
+	CIDR_FILTER="--dcidr=$CIDR"
+
+	rwfilter --type=all --proto=17 $CIDR_FILTER --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --values=records --threshold=3
+}
+
+netflow_excessive_unique_requests(){
+	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS (<0.5s)")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	# Shows all source IPs that have made more than 10 unique requests to the same destination IP and port in less than 0.5 seconds
+	rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwfilter --duration=0.0-0.5 - --pass=stdout | rwsort --field=stime | rwuniq --fields=sip,dip,dport --values=distinct:sport --threshold=distinct:sport=10
+}
+
+netflow_all_ip_addresses(){
+	echo $(log_header "NETFLOW ALL IP ADDRESSES")
+	echo
+
+	# Shows the count of all the records to each IP address
+	(rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=sip &&
+        rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=dip ) | sort | uniq -c | egrep -v "1\s+[sd]IP" | sort -nr
 }
 
 mmdb_check() {
@@ -103,7 +220,7 @@ get_environment() {
 }
 
 get_active_directory() {
-    echo $(log_header "DOMAIN CONTROLLER")
+	echo $(log_header "DOMAIN CONTROLLER")
     echo
 
     dc_ip=$(
@@ -392,17 +509,18 @@ get_http_objects() {
     echo $(log_header "HTTP OBJECTS")
     echo
 
-    rm -rf http.files
+    rm -rf $DIR/http.files
     mkdir http.files
 
     tshark -r $PCAP --export-objects http,http.files &>/dev/null
-
+    
     md5sum http.files/*.* | \
     sed 's/http\.files/ /g' | \
     tr '/' ' ' | \
     column -t | \
     egrep -i --color=always $OBJECT_HIGHLIGHT
 
+    mv http.files $DIR
     echo
 }
 
@@ -410,7 +528,7 @@ get_smb_objects() {
         echo $(log_header "SMB OBJECTS")
     echo
 
-    rm -rf smb.files
+    rm -rf $DIR/smb.files
     mkdir smb.files
 
     tshark -r $PCAP --export-objects smb,smb.files &>/dev/null
@@ -421,14 +539,28 @@ get_smb_objects() {
     column -t | \
     egrep -i --color=always $OBJECT_HIGHLIGHT
 
+    mv smb.files $DIR
     echo
 }
 
+zeek_remove() {
+  if [ $REMOVAL_REQUIRED -eq 1 ]; then
+    rm -rf $DIR
+  fi
+}
+
 execute_all() {
-    log_banner
+	  log_banner
     mmdb_check
     download_threat_intel
-    generate_zeek_output
+    
+    # netflow_create
+    # netflow_all_tcp_ports
+    # netflow_all_udp_ports
+    # netflow_all_ip_addresses
+    # netflow_excessive_unique_requests
+    
+    zeek_create
     get_environment
     get_active_directory
     get_win_computers
@@ -441,6 +573,8 @@ execute_all() {
     get_uris
     get_http_objects
     get_smb_objects
+    get_external_connections
+    zeek_remove
 }
 
 execute_all

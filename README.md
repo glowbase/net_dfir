@@ -1,11 +1,10 @@
 # Net DFIR
-Perform artifact driven analysis on network captures.
+Perform baselining and analysis on network captures.
 
 ## Use
 ```bash
-sudo ./net_dfir.sh
-```
-Alternatively, you may specify a directory for output files with:
-```bash
-sudo ./net_dfir.sh -d <path/to/output/folder> <pcap_file>
+sudo ./net_dfir.sh -r <pcap_file> -e
+
+-r : Specify the input PCAP file for analysis (required)
+-e : Export files detected in packet streams (optional)
 ```

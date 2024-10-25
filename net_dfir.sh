@@ -25,7 +25,7 @@ OBJECT_HIGHLIGHT="\.zip|\.rar|\.exe|\.dat|\.dll|$"
 PCAP=""
 EXPORT=false
 
-while getopts "r:e" opt; do
+while getopts "r:ei:c:" opt; do
     case $opt in
         "r")
             PCAP="$OPTARG"
@@ -122,6 +122,65 @@ mmdb_check() {
         echo "Installing mmdblookup..."
         sudo apt install libmaxminddb0 libmaxminddb-dev mmdb-bin geoipupdate -y &>/dev/null
     fi
+}
+
+netflow_create() {
+	echo $(log_header "NETFLOW")
+	echo
+
+	rwp2yaf2silk --in $PCAP_FILE --out $NETFLOW_FILE
+}
+
+netflow_all_tcp_ports(){
+	echo $(log_header "NETFLOW ALL TCP DESTINATION PORTS")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	rwfilter --type=all --proto=6 $CIDR_FILTER --flags-initial=S/SA --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --count=1000
+}
+
+netflow_all_udp_ports(){
+	echo $(log_header "NETFLOW ALL UDP DESTINATION PORTS")
+	echo
+
+	# if the cidr is not set exit with an error
+	CIDR_FILTER=""
+	if [ -z "$CIDR" ]; then
+		echo $(log_value "CIDR" "CIDR is required for this analysis")
+		return
+	fi
+
+	CIDR_FILTER="--dcidr=$CIDR"
+
+	rwfilter --type=all --proto=17 $CIDR_FILTER --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwstats --fields=dport --values=records --threshold=3
+}
+
+netflow_excessive_unique_requests(){
+	echo $(log_header "NETFLOW EXCESSIVE UNIQUE REQUESTS (<0.5s)")
+	echo
+
+	# if the cidr is set, use it
+	CIDR_FILTER=""
+	if [ ! -z "$CIDR" ]; then
+		CIDR_FILTER="--dcidr=$CIDR"
+	fi
+
+	# Shows all source IPs that have made more than 10 unique requests to the same destination IP and port in less than 0.5 seconds
+	rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwfilter --duration=0.0-0.5 - --pass=stdout | rwsort --field=stime | rwuniq --fields=sip,dip,dport --values=distinct:sport --threshold=distinct:sport=10
+}
+
+netflow_all_ip_addresses(){
+	echo $(log_header "NETFLOW ALL IP ADDRESSES")
+	echo
+
+	# Shows the count of all the records to each IP address
+	(rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=sip &&
+        rwfilter --type=all --proto=0-255 --pass=stdout $NETFLOW_FILE | rwsort --field=stime | rwcut --fields=dip ) | sort | uniq -c | egrep -v "1\s+[sd]IP" | sort -nr
 }
 
 netflow_create() {

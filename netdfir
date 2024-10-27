@@ -473,37 +473,14 @@ get_smb_objects() {
     echo
 }
 
-get_rdp() {
-    echo $(log_header "RDP CONNECTIONS")
+get_ports() {
+    echo $(log_header "PORTS")
     echo
 
-    if [ -f "$DIR/rdp.log" ]; then
-        echo "No RDP Connections..."
-    else
-        local list
-        local traffic=$(
-            tshark -r case.pcap -Y "tcp.port==3389" -T fields -e ip.src -e ip.dst -e tcp.payload
-        )
-
-        while IFS= read -r line; do
-            local occurences
-            local src_ip
-            local dst_ip
-            local country
-            
-            local src_ip_stat
-            local dst_ip_stat
-
-            list+="$occurences,$src_ip_stat -> $dst_ip_stat,$country\n"
-        done <<< "$traffic"
-
-        echo $(log_value "Connections")
-        echo -e "$list" | column -t -s "," | sort -k 1 -n -r
-
-        echo $(log_value "Users")
-
-        echo $(log_value "First & Last")
-    fi
+    tshark -r "$PCAP" -Y "tcp.srcport<10000" -T fields -e tcp.srcport | \
+    sort | \
+    uniq -c | \
+    sort -r
 
     echo
 }
@@ -608,11 +585,11 @@ get_ssh_traffic() {
 }
 
 get_http_traffic() {
-    echo $(log_header "SSH TRAFFIC")
+    echo $(log_header "HTTP TRAFFIC")
     echo
 
     local traffic=$(
-        tshark -r "$PCAP" -t ud -Y ssh -T fields -e _ws.col.Time -e ip.addr | \
+        tshark -r "$PCAP" -t ud -Y "http" -T fields -e _ws.col.Time -e ip.addr | \
         column -t | \
         sort -k 1 -n
     )
@@ -652,22 +629,24 @@ get_http_traffic() {
 
 execute_all() {
 	banner
-    # mmdb_check
-    # download_threat_intel
-    # zeek_create
-    # get_environment
-    # get_active_directory
-    # get_win_computers
-    # get_win_users
-    # get_dhcp_information
-    # get_anomolous_dc_activity
-    # get_malicious_ips
-    # get_user_agents
-    # get_server_hosts
-    # get_uris
-    # get_dns_hostnames
-    # get_smb_traffic
+    mmdb_check
+    download_threat_intel
+    zeek_create
+    get_environment
+    get_active_directory
+    get_win_computers
+    get_win_users
+    get_dhcp_information
+    get_anomolous_dc_activity
+    get_malicious_ips
+    get_user_agents
+    get_server_hosts
+    get_uris
+    get_ports
+    get_dns_hostnames
+    get_smb_traffic
     get_ssh_traffic
+    get_http_traffic
 
     if [ $EXPORT == true ]; then
         get_http_objects

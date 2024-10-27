@@ -318,7 +318,8 @@ get_malicious_ips() {
 
     list=""
     traffic=$(
-        tshark -r "$PCAP" -T fields -e ip.src | \
+        tshark -r "$PCAP" -T fields -e ip.addr | \
+        tr ',' '\n' | \
         sort | \
         uniq -c | \
         column -t

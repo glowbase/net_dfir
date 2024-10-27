@@ -504,6 +504,19 @@ get_rdp() {
     echo
 }
 
+get_dns_hostnames() {
+    echo $(log_header "DNS HOSTNAMES")
+    echo
+
+    tshark -r "$PCAP" -Y dns -T fields -e dns.qry.name | \
+    egrep -v "in-addr.arpa|ip6.arpa" | \
+    sort | \
+    uniq -c | \
+    sort -k 1 -n -r
+
+    echo
+}
+
 execute_all() {
 	banner
     mmdb_check
@@ -519,6 +532,7 @@ execute_all() {
     get_user_agents
     get_server_hosts
     get_uris
+    get_dns_hostnames
 
     if [ $EXPORT == true ]; then
         get_http_objects

@@ -391,8 +391,8 @@ get_external_connections() {
     echo $(log_header "EXTERNAL CONNECTIONS")
     echo
 
-    list=""
-    ports=$(
+    local list=""
+    local ports=$(
         tshark -r $PCAP -T fields -e ip.dst -e tcp.srcport | \
         awk '$2 <= 10000' | \
         sort | \
@@ -455,6 +455,41 @@ get_smb_objects() {
     egrep -i --color=always $OBJECT_HIGHLIGHT
 
     mv smb.files $DIR
+    echo
+}
+
+get_rdp() {
+    echo $(log_header "RDP CONNECTIONS")
+    echo
+
+    if [ -f "$DIR/rdp.log" ]; then
+        echo "No RDP Connections..."
+    else
+        local list
+        local traffic=$(
+            tshark -r case.pcap -Y "tcp.port==3389" -T fields -e ip.src -e ip.dst -e tcp.payload
+        )
+
+        while IFS= read -r line; do
+            local occurences
+            local src_ip
+            local dst_ip
+            local country
+            
+            local src_ip_stat
+            local dst_ip_stat
+
+            list+="$occurences,$src_ip_stat -> $dst_ip_stat,$country\n"
+        done <<< "$traffic"
+
+        echo $(log_value "Connections")
+        echo -e "$list" | column -t -s "," | sort -k 1 -n -r
+
+        echo $(log_value "Users")
+
+        echo $(log_value "First & Last")
+    fi
+
     echo
 }
 

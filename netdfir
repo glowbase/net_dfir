@@ -124,6 +124,10 @@ download_threat_intel() {
     fi
 }
 
+get_first_last() {
+    awk 'NR==1{first=$0} {last=$0} END{print first; print last}'
+}
+
 get_environment() {
     echo $(log_header "ENVIRONMENT")
     echo
@@ -517,22 +521,153 @@ get_dns_hostnames() {
     echo
 }
 
+get_smb_traffic() {
+    echo $(log_header "SMB TRAFFIC")
+    echo
+
+    local traffic=$(
+        tshark -r "$PCAP" -t ud -Y smb -T fields -e _ws.col.Time -e ip.addr | \
+        column -t | \
+        sort -k 1 -n
+    )
+
+    local time=$(echo "$traffic" | awk '{print $1, $2}')
+    local ips=$(echo "$traffic" | awk '{print $3}' | tr ',' '\n' | sort | uniq -c)
+    
+    local number=$(echo "$traffic" | wc -l)
+    local first=$(echo "$time" | head -n 1 | cut -d "." -f 1)
+    local last=$(echo "$time" | tail -n 1 | cut -d "." -f 1)
+    
+    echo $(log_value "Packets" $number)
+    echo $(log_value "First Packet" "$first")
+    echo $(log_value "Last Packet" "$last")
+    echo
+    echo $(log_value "IP Addresses")
+
+    local list=""
+    while IFS= read -r line; do
+        local occurences=$(echo $line | cut -d " " -f 1)
+        local ip=$(echo $line | cut -d " " -f 2)
+        local country=$(
+            mmdblookup -f /tmp/geo-city.mmdb -i $ip country names en 2>/dev/null | \
+            cut -d '"' -f 2 | \
+            egrep -v '^$' | \
+            egrep -i --color=always $GEO_HIGHLIGHT
+        )
+        local ip_stat=$(check_ip $ip)
+
+        list+="  $occurences,$ip_stat,$country\n"
+    done <<< "$ips"
+
+    echo -e "$list" | column -t -s "," | sort -k 1 -n -r
+
+    echo
+}
+
+get_ssh_traffic() {
+    echo $(log_header "SSH TRAFFIC")
+    echo
+
+    local traffic=$(
+        tshark -r "$PCAP" -t ud -Y ssh -T fields -e _ws.col.Time -e ip.addr | \
+        column -t | \
+        sort -k 1 -n
+    )
+
+    local time=$(echo "$traffic" | awk '{print $1, $2}')
+    local ips=$(echo "$traffic" | awk '{print $3}' | tr ',' '\n' | sort | uniq -c)
+    
+    local number=$(echo "$traffic" | wc -l)
+    local first=$(echo "$time" | head -n 1 | cut -d "." -f 1)
+    local last=$(echo "$time" | tail -n 1 | cut -d "." -f 1)
+    
+    echo $(log_value "Packets" $number)
+    echo $(log_value "First Packet" "$first")
+    echo $(log_value "Last Packet" "$last")
+    echo
+    echo $(log_value "IP Addresses")
+
+    local list=""
+    while IFS= read -r line; do
+        local occurences=$(echo $line | cut -d " " -f 1)
+        local ip=$(echo $line | cut -d " " -f 2)
+        local country=$(
+            mmdblookup -f /tmp/geo-city.mmdb -i $ip country names en 2>/dev/null | \
+            cut -d '"' -f 2 | \
+            egrep -v '^$' | \
+            egrep -i --color=always $GEO_HIGHLIGHT
+        )
+        local ip_stat=$(check_ip $ip)
+
+        list+="  $occurences,$ip_stat,$country\n"
+    done <<< "$ips"
+
+    echo -e "$list" | column -t -s "," | sort -k 1 -n -r
+
+    echo
+}
+
+get_http_traffic() {
+    echo $(log_header "SSH TRAFFIC")
+    echo
+
+    local traffic=$(
+        tshark -r "$PCAP" -t ud -Y ssh -T fields -e _ws.col.Time -e ip.addr | \
+        column -t | \
+        sort -k 1 -n
+    )
+
+    local time=$(echo "$traffic" | awk '{print $1, $2}')
+    local ips=$(echo "$traffic" | awk '{print $3}' | tr ',' '\n' | sort | uniq -c)
+    
+    local number=$(echo "$traffic" | wc -l)
+    local first=$(echo "$time" | head -n 1 | cut -d "." -f 1)
+    local last=$(echo "$time" | tail -n 1 | cut -d "." -f 1)
+    
+    echo $(log_value "Packets" $number)
+    echo $(log_value "First Packet" "$first")
+    echo $(log_value "Last Packet" "$last")
+    echo
+    echo $(log_value "IP Addresses")
+
+    local list=""
+    while IFS= read -r line; do
+        local occurences=$(echo $line | cut -d " " -f 1)
+        local ip=$(echo $line | cut -d " " -f 2)
+        local country=$(
+            mmdblookup -f /tmp/geo-city.mmdb -i $ip country names en 2>/dev/null | \
+            cut -d '"' -f 2 | \
+            egrep -v '^$' | \
+            egrep -i --color=always $GEO_HIGHLIGHT
+        )
+        local ip_stat=$(check_ip $ip)
+
+        list+="  $occurences,$ip_stat,$country\n"
+    done <<< "$ips"
+
+    echo -e "$list" | column -t -s "," | sort -k 1 -n -r
+
+    echo
+}
+
 execute_all() {
 	banner
-    mmdb_check
-    download_threat_intel
-    zeek_create
-    get_environment
-    get_active_directory
-    get_win_computers
-    get_win_users
-    get_dhcp_information
-    get_anomolous_dc_activity
-    get_malicious_ips
-    get_user_agents
-    get_server_hosts
-    get_uris
-    get_dns_hostnames
+    # mmdb_check
+    # download_threat_intel
+    # zeek_create
+    # get_environment
+    # get_active_directory
+    # get_win_computers
+    # get_win_users
+    # get_dhcp_information
+    # get_anomolous_dc_activity
+    # get_malicious_ips
+    # get_user_agents
+    # get_server_hosts
+    # get_uris
+    # get_dns_hostnames
+    # get_smb_traffic
+    get_ssh_traffic
 
     if [ $EXPORT == true ]; then
         get_http_objects

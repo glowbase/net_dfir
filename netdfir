@@ -2,6 +2,7 @@
 
 clear
 
+BLACK='\e[30m'
 RED='\033[31m'
 GREEN='\033[32m'
 BLUE='\033[34m'
@@ -23,14 +24,18 @@ OBJECT_HIGHLIGHT="\.zip|\.rar|\.exe|\.dat|\.dll|$"
 
 PCAP=""
 EXPORT=false
+ADVERSARY_IP=""
 
-while getopts "r:e" opt; do
+while getopts "r:a:e" opt; do
     case $opt in
-        "r")
+        r)
             PCAP="$OPTARG"
             ;;
-        "e")
+        e)
             EXPORT=true
+            ;;
+        a)
+            ADVERSARY_IP="$OPTARG"
             ;;
     esac
 done
@@ -50,19 +55,22 @@ banner() {
 
 help() {
     banner
-    echo "Usage: $0 [-r <pcap_file>] [-e]"
+    echo "Usage: $0 [-r <pcap_file>] [-a <ip_address>] [-e]"
     echo
     echo "Options:"
     echo "  -r <pcap_file>      Specify the input PCAP file for analysis (required)"
+    echo "  -a <ip_address>     Specify an adversaries IP address to flag (optional)"
     echo "  -e                  Export files detected in packet streams (optional)"
     echo
     echo "Example:"
+    echo "  $0 -r capture.pcap"
     echo "  $0 -r capture.pcap -e"
+    echo "  $0 -r capture.pcap -a 203.103.50.19 -e"
     exit
 }
 
-if [[ $PCAP == *.pcap || $PCAP == *.cap ]]; then
-    DIR="$(realpath $PCAP.zeek)"
+if [[ "$PCAP" == *.pcap || "$PCAP" == *.cap ]]; then
+    DIR="$(realpath "$PCAP".zeek)"
 else
     help
 fi
@@ -90,11 +98,11 @@ zeek_create() {
     echo
 
     if [ ! -d "$DIR" ]; then
-        mkdir $DIR
+        mkdir "$DIR"
     fi
 
-	zeek -r $PCAP
-    mv *.log $DIR
+	zeek -r "$PCAP"
+    mv *.log "$DIR"
 }
 
 mmdb_check() {
@@ -121,7 +129,7 @@ get_environment() {
     echo
 
     local ad_domain=$(
-        cat $DIR/kerberos.log | \
+        cat "$DIR"/kerberos.log | \
         zeek-cut service | \
         grep krbtgt | \
         head -n 1 | \
@@ -138,7 +146,7 @@ get_active_directory() {
     echo
 
     dc_ip=$(
-        cat $DIR/kerberos.log | \
+        cat "$DIR"/kerberos.log | \
         zeek-cut id.resp_h service | \
         grep LDAP | \
         head -n 1 | \
@@ -149,7 +157,7 @@ get_active_directory() {
     echo $(log_value "IP Address" $dc_ip)
 
     dc_name=$(
-        cat $DIR/kerberos.log | \
+        cat "$DIR"/kerberos.log | \
         zeek-cut id.resp_h service | \
         grep LDAP | \
         head -n 1 | \
@@ -160,7 +168,7 @@ get_active_directory() {
     echo $(log_value "Hostname" $dc_name)
 
     dc_os=$(
-        tshark -r $PCAP -Y "smb.native_os&&ip.src==$dc_ip" -T fields -e smb.native_os | \
+        tshark -r "$PCAP" -Y "smb.native_os&&ip.src==$dc_ip" -T fields -e smb.native_os | \
         grep -v '^\s*$' | \
         sort | \
         uniq
@@ -169,7 +177,7 @@ get_active_directory() {
     echo $(log_value "Operating System" "$dc_os")
 
     dc_mac=$(
-        tshark -r $PCAP -Y "ip.dst==$dc_ip" -T fields -e eth.dst | head -n 1
+        tshark -r "$PCAP" -Y "ip.dst==$dc_ip" -T fields -e eth.dst | head -n 1
     )
     
     echo $(log_value "MAC Address" "$dc_mac")
@@ -182,7 +190,7 @@ get_win_computers() {
     echo
 
     local win_hosts=$(
-        tshark -r $PCAP -Y "ip.dst!=$dc_ip&&kerberos.CNameString contains '$'" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
+        tshark -r "$PCAP" -Y "ip.dst!=$dc_ip&&kerberos.CNameString contains '$'" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
         awk '{print toupper($0)}' | \
         sed 's/\$//g' | \
         column -t | \
@@ -200,7 +208,7 @@ get_win_users() {
     echo
 
     local win_users=$(
-        tshark -r $PCAP -Y "kerberos.CNameString&&ip.dst!=$dc_ip&& not (kerberos.CNameString contains '$')" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
+        tshark -r "$PCAP" -Y "kerberos.CNameString&&ip.dst!=$dc_ip&& not (kerberos.CNameString contains '$')" -T fields -e eth.dst -e ip.dst -e kerberos.CNameString | \
         column -t | \
         sort | \
         uniq
@@ -215,11 +223,11 @@ get_dhcp_information() {
     echo $(log_header "DHCP")
     echo
     
-    local dhcp_packets=$(tshark -r $PCAP -Y dhcp | wc -l)
+    local dhcp_packets=$(tshark -r "$PCAP" -Y dhcp | wc -l)
 
     if [ $dhcp_packets != 0 ]; then
         local dhcp=$(
-            tshark -r $PCAP -Y "dhcp.type==2" -T fields \
+            tshark -r "$PCAP" -Y "dhcp.type==2" -T fields \
                 -e dhcp.option.domain_name \
                 -e dhcp.option.domain_name_server \
                 -e dhcp.option.dhcp_server_id \
@@ -246,7 +254,7 @@ get_dhcp_information() {
 
         echo $(log_value "DHCP Devices")
         
-        tshark -r $PCAP -Y "dhcp.option.dhcp==5&&ip.src!=0.0.0.0" -T fields -e dhcp.ip.your | \
+        tshark -r "$PCAP" -Y "dhcp.option.dhcp==5&&ip.src!=0.0.0.0" -T fields -e dhcp.ip.your | \
         sort | \
         uniq
     else
@@ -261,6 +269,8 @@ check_ip() {
 
     if cat /tmp/ipsum.txt | grep -q "$ip"; then
         echo -e "${RED_BG}${WHITE}$ip${RESET}"
+    elif [ -n "$ADVERSARY_IP" ] && echo "$ip" | grep -q "$ADVERSARY_IP"; then
+        echo -e "${YELLOW_BG}${BLACK}$ip${RESET}"
     else
         echo -e "$ip"
     fi
@@ -272,7 +282,7 @@ get_anomolous_dc_activity() {
 
     local list=""
     local traffic=$(
-        tshark -r $PCAP -Y "tcp.srcport<10000&&ip.src==$dc_ip" -T fields -e ip.src -e ip.dst -e tcp.srcport | \
+        tshark -r "$PCAP" -Y "tcp.srcport<10000&&ip.src==$dc_ip" -T fields -e ip.src -e ip.dst -e tcp.srcport | \
         sort | \
         uniq -c | \
         column -t
@@ -308,7 +318,7 @@ get_malicious_ips() {
 
     list=""
     traffic=$(
-        tshark -r $PCAP -T fields -e ip.src | \
+        tshark -r "$PCAP" -T fields -e ip.src | \
         sort | \
         uniq -c | \
         column -t
@@ -337,7 +347,7 @@ get_user_agents() {
     echo $(log_header "USER AGENTS")
     echo
 
-    tshark -r $PCAP -Y http.user_agent -T fields -e ip.src -e http.user_agent | \
+    tshark -r "$PCAP" -Y http.user_agent -T fields -e ip.src -e http.user_agent | \
     egrep -i --color=always $AGENT_HIGHLIGHT | \
     sort | \
     uniq -c | \
@@ -350,7 +360,7 @@ get_server_hosts() {
     echo $(log_header "SERVER HOSTS")
     echo
 
-    tshark -r $PCAP -Y http.server -T fields -e ip.src -e http.server | \
+    tshark -r "$PCAP" -Y http.server -T fields -e ip.src -e http.server | \
     egrep -i --color=always $HOST_HIGHLIGHT | \
     sort | \
     uniq -c | \
@@ -365,7 +375,7 @@ get_uris() {
 
     list=""
     uris=$(
-        tshark -r $PCAP -Y http.request.uri -T fields -e ip.dst -e tcp.dstport -e  http.request.uri | \
+        tshark -r "$PCAP" -Y http.request.uri -T fields -e ip.dst -e tcp.dstport -e  http.request.uri | \
         egrep -i --color=always $FILE_HIGHLIGHT | \
         sort | \
         uniq -c | \
@@ -393,7 +403,7 @@ get_external_connections() {
 
     local list=""
     local ports=$(
-        tshark -r $PCAP -T fields -e ip.dst -e tcp.srcport | \
+        tshark -r "$PCAP" -T fields -e ip.dst -e tcp.srcport | \
         awk '$2 <= 10000' | \
         sort | \
         uniq -c | \
@@ -424,10 +434,10 @@ get_http_objects() {
     echo $(log_header "HTTP OBJECTS")
     echo
 
-    rm -rf $DIR/http.files
+    rm -rf "$DIR"/http.files
     mkdir http.files
 
-    tshark -r $PCAP --export-objects http,http.files &>/dev/null
+    tshark -r "$PCAP" --export-objects http,http.files &>/dev/null
     
     md5sum http.files/*.* | \
     sed 's/http\.files/ /g' | \
@@ -435,7 +445,7 @@ get_http_objects() {
     column -t | \
     egrep -i --color=always $OBJECT_HIGHLIGHT
 
-    mv http.files $DIR
+    mv http.files "$DIR"
     echo
 }
 
@@ -443,10 +453,10 @@ get_smb_objects() {
         echo $(log_header "SMB OBJECTS")
     echo
 
-    rm -rf $DIR/smb.files
+    rm -rf "$DIR"/smb.files
     mkdir smb.files
 
-    tshark -r $PCAP --export-objects smb,smb.files &>/dev/null
+    tshark -r "$PCAP" --export-objects smb,smb.files &>/dev/null
 
     md5sum smb.files/*.* | \
     sed 's/smb\.files/ /g' | \
@@ -454,7 +464,7 @@ get_smb_objects() {
     column -t | \
     egrep -i --color=always $OBJECT_HIGHLIGHT
 
-    mv smb.files $DIR
+    mv smb.files "$DIR"
     echo
 }
 

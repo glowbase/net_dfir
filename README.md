@@ -9,6 +9,8 @@ Perform baselining and analysis on network captures.
 - -e : Export files detected in data streams (optional)
 - -a : Specify an adversary IP address to highlight (optional)
 
+![image](https://github.com/user-attachments/assets/6ad066dd-013d-499e-b7c4-a35a22450e25)
+
 ## Example Output
 
 To help with the process of determining malicious traffic, adversary IP addresses and indiciators of compromise:

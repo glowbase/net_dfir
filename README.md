@@ -3,10 +3,11 @@ Perform baselining and analysis on network captures.
 
 ## Use
 ```bash
-sudo ./net_dfir.sh -r <pcap_file> -e
+./netdfir.sh -r <pcap_file> -e -a
 ```
 - -r : Specify the input PCAP file for analysis (required)
 - -e : Export files detected in data streams (optional)
+- -a : Specify an adversary IP address to highlight (optional)
 
 ## Example Output
 
